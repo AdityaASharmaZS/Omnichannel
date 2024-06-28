@@ -38,4 +38,4 @@ If you are new to Databricks, create an account at: https://databricks.com/try-d
 4. pyspark
 
 ## Datasets used
-Several omnichannel-specific datasets have been used to build and run the model. Sample datasets can be found in the "Data_Files" folder, along with an additional README file containing data specifications.
+Several omnichannel-specific datasets have been used to build and run the model. Sample datasets can be found in the "Data_Files" folder, along with an additional README "Data File Information.png" file containing data specifications.
