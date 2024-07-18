@@ -1,19 +1,13 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC #This Notebook explains the Model Workflow of the NBA Prediction system
+# MAGIC #This Notebook executes the Workflow of the NBA Solution
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Importing the Necessary libraries
+# MAGIC #### Importing the Necessary libraries
 
 # COMMAND ----------
-
-# Thoughts: 
-# 1) Move some of the constants to the config
-# 2) Make this more like py files (library types)
-# 3) Initial configuration (catalog - NBA calatog - have tables in it, define schema)
-# 4) Read directly from volume - RAW data, stagning database, results
 
 # For data manipulation and analysis
 import pandas as pd
@@ -48,6 +42,8 @@ import numpy as np
 from sklearn.model_selection import train_test_split
 
 # Importing the Gekko optimization suite
+!pip install gekko
+!pip install -U kaleido
 import gekko
 from gekko import GEKKO
 
@@ -82,30 +78,115 @@ import ast
 import mlflow
 
 # turn on autologging for mlflow
-mlflow.auto_log()
+mlflow.autolog()
 
 # set up a default experiment name
 current_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
 # set experiment for mlflow
-mlflow.set_experiment(f"{'/'.join(current_path.split('/')[:3])}/next_best_action_hls_demo")
+mlflow.set_experiment(f"{'/'.join(current_path.split('/')[:3])}/NBA Solution Demo")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC #### Setting up the logging configuration for the script. It specifies that error messages will be logged to a file named lnba_validation_log.txt. The log entries will include the timestamp, log level, and the actual log message.
+# MAGIC #### Setting up the logging configuration for the script
+# MAGIC It specifies that error messages will be logged to a file named lnba_validation_log.txt. The log entries will include the timestamp, log level, and the actual log message.
 
 # COMMAND ----------
 
 # Configure the logging settings
-# - Log messages will be written to 'lnba_validation_log.txt'
-# - Only messages with a severity level of ERROR or higher will be logged
-# - Each log entry will include the timestamp, log level, and the log message
 logging.basicConfig(filename='./Archive/lnba_validation_log.txt', level=logging.ERROR, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC #### This dictionary, 'columns_dtypes', defines the expected data types for the columns in various data sources used within the script. Each key in the dictionary represents a different data source, and its value is another dictionary mapping column names to their respective data types. This ensures that when the data is read into pandas DataFrames, the columns have the correct data types, facilitating consistent data processing and analysis.
+# MAGIC #### Loading control parameters from Config file
+# MAGIC The 'load_config' function reads configuration data from a YAML file, parses it into a Python dictionary, and sets up the necessary file paths and directories. It extracts file paths, control parameters, run periods, and output configurations from the YAML file. The output folder path is constructed using the provided run ID, and directories for storing results are created accordingly.
+
+# COMMAND ----------
+
+def load_config(config_path):
+    """
+    Load configuration data from a YAML file and set up the necessary file paths and directories.
+
+    This function reads a configuration file in YAML format from the specified path, parses it into
+    a Python dictionary, and extracts various configuration parameters. It then constructs the output
+    folder path using the provided run_id and creates necessary directories for storing results.
+
+    Parameters:
+    config_path (str): The path to the YAML configuration file.
+
+    Returns:
+    bool: Returns True if the configuration is successfully loaded and directories are created.
+    
+    Raises:
+    SystemExit: Exits the program if an error occurs while loading the configuration.
+    """
+    # Reading Configuration Data
+    try:
+        with open(config_path, 'r') as config_file:
+            print('config file loaded')
+            # The yaml.safe_load function parses the YAML data into a Python dictionary named config_data
+            config_data = yaml.safe_load(config_file)
+
+        # Define global variables for storing configuration data
+        global config_file_paths, config_controls, config_run_period, output_folder, catalog_name, config_schema_names
+        
+        # Extract file paths, control parameters, and run period from the configuration data
+        # config_file_paths = config_data.get('file_paths', {})
+        config_file_paths = config_data.get('table_names', {})
+        config_controls = config_data.get('control_parameters', {})
+        config_run_period = config_data.get('run_period', {})
+        catalog_name = config_data.get('catalog_name', {})
+        config_schema_names = config_data.get('schema_names',{})
+        print('file paths set')
+        # Extract output configuration
+        output = config_data.get('output', {})
+        run_id = output.get('run_id', '')
+        output_path = output.get('output_folder_path', '')
+        
+        # Normalize the output path and construct the full output folder path
+        output_path = output_path.replace('//', '/')
+        output_path = os.path.join(*output_path.split('/'))
+        output_folder = os.path.join(output_path, run_id)
+
+        # Create the necessary directories for storing results
+        os.makedirs(output_folder, exist_ok=True)
+        os.makedirs(os.path.join(output_folder, 'Final_Plan'), exist_ok=True)
+        os.makedirs(os.path.join(output_folder, 'Customer_Segmentation_Charts'), exist_ok=True)
+        os.makedirs(os.path.join(output_folder, 'Uplift'), exist_ok=True)
+    
+    except Exception as e:
+        # Log the error and print a message to the console
+        logging.error(f"Error loading configuration from {config_path}: {e}")
+        print(f"Error loading configuration from {config_path}. Please check the logs for details.")
+        # Exit the program with an error code
+        sys.exit(1)
+    
+    # Return True if the configuration is successfully loaded and directories are created
+    return True
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC #### Time Standardization
+# MAGIC The 'granularity_mapping' dictionary maps different time granularities to their respective multipliers. These multipliers represent the number of periods that fit into a year for each granularity type. This mapping is useful for converting and normalizing time-based data.
+
+# COMMAND ----------
+
+granularity_mapping = {
+    'WEEKLY': 13,       # 13 weeks in a quarter (approximately 52 weeks in a year divided by 4)
+    'DAILY': 91,        # 91 days in a quarter (approximately 365 days in a year divided by 4)
+    'MONTHLY': 3,       # 3 months in a quarter (12 months in a year divided by 4)
+    'QUARTERLY': 1,     # 1 quarter in a quarter
+    'SEMESTERLY': 0.5,  # 0.5 semesters in a quarter (2 semesters in a year divided by 4)
+    'YEARLY': 0.25      # 0.25 years in a quarter (1 year divided by 4)
+}
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC #### Data Files Schema Definition
+# MAGIC Dictionary, 'columns_dtypes', defines the expected data types for the columns in various data sources used within the script. Each key in the dictionary represents a different data source, and its value is another dictionary mapping column names to their respective data types. This ensures that when the data is read into DataFrames, the columns have the correct data types, facilitating consistent data processing and analysis.
 
 # COMMAND ----------
 
@@ -187,29 +268,8 @@ columns_dtypes = {
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC #### The 'granularity_mapping' dictionary maps different time granularities to their respective multipliers. These multipliers represent the number of periods that fit into a year for each granularity type. This mapping is useful for converting and normalizing time-based data.
-
-# COMMAND ----------
-
-# Define a mapping of time granularities to their respective multipliers.
-# These multipliers represent the number of periods in a year for each granularity type.
-# This mapping is useful for converting and normalizing time-based data.
-
-# Aditya CMT - Put this in config
-
-granularity_mapping = {
-    'WEEKLY': 13,       # 13 weeks in a quarter (approximately 52 weeks in a year divided by 4)
-    'DAILY': 91,        # 91 days in a quarter (approximately 365 days in a year divided by 4)
-    'MONTHLY': 3,       # 3 months in a quarter (12 months in a year divided by 4)
-    'QUARTERLY': 1,     # 1 quarter in a quarter
-    'SEMESTERLY': 0.5,  # 0.5 semesters in a quarter (2 semesters in a year divided by 4)
-    'YEARLY': 0.25      # 0.25 years in a quarter (1 year divided by 4)
-}
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC #### The 'validate_files' function is designed to validate a set of file paths to ensure that they point to valid CSV files, which can be read successfully and match the expected format. The function takes a dictionary where keys represent file categories (such as 'train', 'test', etc.) and values are the file paths.
+# MAGIC #### Data Files Validation for the Model (to make sure the data exists)
+# MAGIC The 'validate_files' function is designed to validate a set of file paths to ensure that they point to relevent CSV files, which can be read successfully and match the expected format. The function takes a dictionary where keys represent file categories (such as 'train', 'test', etc.) and values are the file paths.
 
 # COMMAND ----------
 
@@ -288,7 +348,8 @@ def validate_files(file_paths):
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC #### The 'check_file' function validates a CSV file by ensuring it contains the expected columns, that these columns have the correct data types, and that there are no NULL values present in any of the columns. It is part of a larger process to ensure data integrity before further processing or analysis.
+# MAGIC #### Data Files Validation for the Model (to make sure the data is consistent in schema)
+# MAGIC The 'check_file' function validates a CSV file by ensuring it contains the expected columns, that these columns have the correct data types, and that there are no NULL values present in any of the columns. It is part of a larger process to ensure data integrity before further processing or analysis.
 
 # COMMAND ----------
 
@@ -360,65 +421,8 @@ def check_file(file_category, file_path, expected_columns_dtypes):
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC #### The 'calculate_optimized_trx' function computes an optimized transaction value based on given parameters and a specified transformation type. This function is designed to work with data in a pandas DataFrame, taking a row of data and extracting necessary values to perform the calculation. The calculation varies depending on the transformation type, which can be logarithmic, power, linear, or negative exponential.
-
-# COMMAND ----------
-
-# Maybe in the confirg. Have some insight into why someone should be using a particular transformation
-
-def calculate_optimized_trx(row, tps, beta):
-    """
-    Calculate the optimized transaction value based on the given parameters and transformation type.
-
-    Parameters:
-    row (pd.Series): A pandas Series representing a row from a DataFrame, containing necessary parameters for calculation.
-    tps (str): The column name in the row representing the number of transactions per second (tps).
-    beta (str): The column name in the row representing the beta or response coefficient.
-
-    Returns:
-    float: The calculated optimized transaction value.
-
-    This function performs the calculation based on the type of transformation specified in the 'TRANSFORMATION' column.
-    Supported transformations include:
-        - LOG: Logarithmic transformation
-        - POWER: Power transformation
-        - LINEAR: Linear transformation
-        - NEGEX: Negative Exponential transformation
-
-    Raises:
-    ValueError: If an unsupported transformation type is specified.
-    """
-    
-    # Extract relevant values from the row
-    freq = row[tps]  # Number of transactions per second (tps)
-    k = row["PARAMETER1"]
-    a = row["ADJ_FACTOR"]
-    coef = row[beta]  # Beta/response coefficient
-    transformation = row['TRANSFORMATION']
-    
-    # Calculate the optimized transaction value based on the transformation type
-    if transformation == "LOG":
-        # Logarithmic transformation
-        return np.log(1 + freq * k) * a * coef
-    elif transformation == "POWER":
-        # Power transformation
-        return (freq ** k) * a * coef
-    elif transformation == "LINEAR":
-        # Linear transformation
-        return freq * coef
-    elif transformation == "NEGEX":
-        # Negative Exponential transformation
-        return (1 - np.exp(-freq * k)) * a * coef
-    else:
-        # Unsupported transformation type
-        error_msg = f"Unsupported transformation: {transformation}. Supported transformations are LOG, POWER, LINEAR, and NEGEX."
-        logging.error(error_msg)
-        raise ValueError(error_msg)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC #### The 'process_files' function reads, processes, and merges multiple CSV files based on a given configuration to create a final DataFrame for analysis. It handles various data files including customer data, constraint segments, MMIX output, asset availability, vendor contracts, and more. The function includes data cleaning, transformation, and metric calculation to prepare the data for analysis.
+# MAGIC #### Data Files Integration for the model
+# MAGIC The 'process_files' function reads, processes, and merges multiple data files based on a given configuration to create a final DataFrame for analysis. It handles various data files including customer data, constraint segments, MMIX output, asset availability, vendor contracts, and more. The function includes data cleaning, transformation, and metric calculation to prepare the data for analysis.
 
 # COMMAND ----------
 
@@ -698,184 +702,242 @@ def process_files(config, allow_processing_with_errors=False):
     
     return df_final
 
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC #### The 'affinity_segment_charts' function generates classification charts for different customer segments based on their affinity scores. It creates bar charts illustrating the distribution of customers across various segments and affinity levels for each channel.
-
-# COMMAND ----------
-
-def affinity_segment_charts(final_df):
-    cps = ["VH", "H", "M", "L", "VL", "Z", "NR"]
-
-    customer_segment = pd.DataFrame(columns=["Segment", "Channel", "#HCPs"])
-    segment_column_list = final_df['CONSTRAINT_SEGMENT_NAME'].unique().tolist()
-    channel_column = 'CHANNEL'
-    affinity_column = 'AFFINITY_SEGMENT'
-    
-    for i in segment_column_list:
-        for j in cps:
-                reqdata = final_df[['HCP_ID', i, channel_column, 'AFFINITY_SCORE', affinity_column]]
-                if (j in reqdata[affinity_column].unique()):
-                    reqdata2 = reqdata[reqdata[affinity_column] == j]
-                    la = pd.DataFrame(pd.crosstab(index=reqdata2[i], columns=reqdata2[channel_column],
-                                                  values=reqdata2['HCP_ID'], aggfunc=pd.Series.nunique).reset_index())
-
-                    lab = la.set_index(i)
-                    labb = lab.stack().reset_index()
-                    labb.rename(columns={0: '#HCPs'}, inplace=True)
-
-                    colors = ['#ED7D31', '#EF995F', '#FFD68A', '#FFA500', '#FFB52E', '#FFC55C', '#FF6347', '#FF4500',
-                              '#FF7F50']
-                    abcd = f"Classification of customers for '{i}' and affinity segment '{j}'"
-
-                    fig = px.bar(labb, x=i, y='#HCPs', color=labb[channel_column], barmode='stack',
-                                 text=labb['#HCPs'].astype(str), color_discrete_sequence=colors)
-
-                    ylabel = f"n size ({len(np.unique(reqdata2['HCP_ID'])):,} HCPs)"
-
-                    fig.update_layout(title_text=abcd, title_x=0.5, title_font_color='#ED7D31')
-                    fig.update_layout(xaxis_title=ylabel)
-                    fig.update_layout(yaxis_title="Number of Customers")
-                    fig.update_layout({
-                        'plot_bgcolor': 'rgba(0, 0, 0, 0)',
-                        'paper_bgcolor': 'rgba(0, 0, 0, 0)',
-                    })
-
-                    fig.update_traces(texttemplate='%{text:,}')
-                    fig.update_traces(textfont_size=12)
-                    fig.update_traces(texttemplate='%{text:,}')
-                    fig.update_yaxes(tickformat=",d")
-                     
-                    output_path = os.path.join(output_folder, 'Customer_Segmentation_Charts', f"Classification_of_customers_for_{i}_and_affinity_segment_{j}.png")
-                    fig.write_image(file=output_path,engine="kaleido")
-
-                    labb["Segment Name"] = i
-                    labb["Affinity Segment"] = j
-                    labb.rename(columns={i: "Segment"}, inplace=True)
-                    customer_segment = pd.concat([customer_segment, labb]).reset_index(drop=True)
-
-    return None
-
-# COMMAND ----------
-
-# config_path = "./Archive/config.yaml"
-# output_path = output_path.replace('//', '/')
-# output_path = os.path.join(*output_path.split('/'))
-# output_folder = os.path.join(output_path, run_id)
-
-# with open(config_path, 'r') as config_file:
-#     # The yaml.safe_load function parses the YAML data into a Python dictionary named config_data
-#     config_data = yaml.safe_load(config_file)
-#     output = config_data.get('output', {})
-#     run_id = output.get('run_id', '')
-#     output_path = output.get('output_folder_path', '')
-#     a=os.path.join(output_folder,"a")
-
-
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC #### The 'load_config' function reads configuration data from a YAML file, parses it into a Python dictionary, and sets up the necessary file paths and directories. It extracts file paths, control parameters, run periods, and output configurations from the YAML file. The output folder path is constructed using the provided run ID, and directories for storing results are created accordingly.
-
-# COMMAND ----------
-
-def load_config(config_path):
+def create_subsets(df_final):
     """
-    Load configuration data from a YAML file and set up the necessary file paths and directories.
+    Creates subsets of the input DataFrame based on unique combinations of channels and constraint segment values.
 
-    This function reads a configuration file in YAML format from the specified path, parses it into
-    a Python dictionary, and extracts various configuration parameters. It then constructs the output
-    folder path using the provided run_id and creates necessary directories for storing results.
-
-    Parameters:
-    config_path (str): The path to the YAML configuration file.
+    Args:
+    - df_final (DataFrame): The DataFrame containing the final data.
 
     Returns:
-    bool: Returns True if the configuration is successfully loaded and directories are created.
-    
+    - train_df (DataFrame): The DataFrame containing subsets of data based on unique combinations of channels and constraint segment values.
+    """
+    columns = df_final.columns.tolist()
+    train_df = pd.DataFrame(columns=columns)
+
+    chan_list = df_final['CHANNEL'].unique().tolist()
+    seg_list = df_final['CONSTRAINT_SEGMENT_VALUE'].unique().tolist()
+
+    # Iterating over unique combinations of channels and constraint segment values
+    for i in chan_list:
+        for j in seg_list:
+            df_temp = df_final[(df_final['CHANNEL'] == i) & (df_final['CONSTRAINT_SEGMENT_VALUE'] == j)].reset_index(drop=True)
+            
+            # Skipping empty subsets
+            if df_temp['HCP_ID'].count() == 0:
+                continue
+            
+            # Creating subsets based on affinity score
+            if df_temp['HCP_ID'].count() <= 500:
+                train = df_temp
+            else:
+                single_value = df_temp[~df_temp['AFFINITY_SCORE'].duplicated(keep=False)]
+                df_temp = df_temp[df_temp['AFFINITY_SCORE'].duplicated(keep=False)]
+                n = 500 / df_temp['HCP_ID'].count()
+                train, test = train_test_split(df_temp, test_size=1 - n, random_state=0, stratify=df_temp[['AFFINITY_SCORE']])
+            
+            # Sorting the subset based on affinity score
+            train = train.reset_index(drop=True)
+            train = train.sort_values(["AFFINITY_SCORE"], ascending=[False])
+
+            train_df = pd.concat([train_df, train, single_value]).reset_index(drop=True)
+
+    return train_df
+
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC #### Calculate Optimized Trasaction value
+# MAGIC The 'calculate_optimized_trx' function computes an optimized transaction value based on given parameters and a specified transformation type. This function is designed to work with data in DataFrame, taking a row of data and extracting necessary values to perform the calculation. The calculation varies depending on the transformation type, which can be logarithmic, power, linear, or negative exponential.
+
+# COMMAND ----------
+
+def calculate_optimized_trx(row, tps, beta):
+    """
+    Calculate the optimized transaction value based on the given parameters and transformation type.
+
+    Parameters:
+    row (pd.Series): A pandas Series representing a row from a DataFrame, containing necessary parameters for calculation.
+    tps (str): The column name in the row representing the number of transactions per second (tps).
+    beta (str): The column name in the row representing the beta or response coefficient.
+
+    Returns:
+    float: The calculated optimized transaction value.
+
+    This function performs the calculation based on the type of transformation specified in the 'TRANSFORMATION' column.
+    Supported transformations include:
+        - LOG: Logarithmic transformation
+        - POWER: Power transformation
+        - LINEAR: Linear transformation
+        - NEGEX: Negative Exponential transformation
+
     Raises:
-    SystemExit: Exits the program if an error occurs while loading the configuration.
+    ValueError: If an unsupported transformation type is specified.
     """
-    # Reading Configuration Data
-    try:
-        with open(config_path, 'r') as config_file:
-            print('config file loaded')
-            # The yaml.safe_load function parses the YAML data into a Python dictionary named config_data
-            config_data = yaml.safe_load(config_file)
-
-        # Define global variables for storing configuration data
-        global config_file_paths, config_controls, config_run_period, output_folder
-        
-        # Extract file paths, control parameters, and run period from the configuration data
-        # config_file_paths = config_data.get('file_paths', {})
-        config_file_paths = config_data.get('table_names', {})
-        config_controls = config_data.get('control_parameters', {})
-        config_run_period = config_data.get('run_period', {})
-        print('file paths set')
-        # Extract output configuration
-        output = config_data.get('output', {})
-        run_id = output.get('run_id', '')
-        output_path = output.get('output_folder_path', '')
-        
-        # Normalize the output path and construct the full output folder path
-        output_path = output_path.replace('//', '/')
-        output_path = os.path.join(*output_path.split('/'))
-        output_folder = os.path.join(output_path, run_id)
-
-        # Create the necessary directories for storing results
-        os.makedirs(output_folder, exist_ok=True)
-        os.makedirs(os.path.join(output_folder, 'Final_Plan'), exist_ok=True)
-        os.makedirs(os.path.join(output_folder, 'Customer_Segmentation_Charts'), exist_ok=True)
-        os.makedirs(os.path.join(output_folder, 'Uplift'), exist_ok=True)
     
-    except Exception as e:
-        # Log the error and print a message to the console
-        logging.error(f"Error loading configuration from {config_path}: {e}")
-        print(f"Error loading configuration from {config_path}. Please check the logs for details.")
-        # Exit the program with an error code
-        sys.exit(1)
+    # Extract relevant values from the row
+    freq = row[tps]  # Number of transactions per second (tps)
+    k = row["PARAMETER1"]
+    a = row["ADJ_FACTOR"]
+    coef = row[beta]  # Beta/response coefficient
+    transformation = row['TRANSFORMATION']
     
-    # Return True if the configuration is successfully loaded and directories are created
-    return True
+    # Calculate the optimized transaction value based on the transformation type
+    if transformation == "LOG":
+        # Logarithmic transformation
+        return np.log(1 + freq * k) * a * coef
+    elif transformation == "POWER":
+        # Power transformation
+        return (freq ** k) * a * coef
+    elif transformation == "LINEAR":
+        # Linear transformation
+        return freq * coef
+    elif transformation == "NEGEX":
+        # Negative Exponential transformation
+        return (1 - np.exp(-freq * k)) * a * coef
+    else:
+        # Unsupported transformation type
+        error_msg = f"Unsupported transformation: {transformation}. Supported transformations are LOG, POWER, LINEAR, and NEGEX."
+        logging.error(error_msg)
+        raise ValueError(error_msg)
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC #### The 'select_option' function facilitates the selection of an option from a dictionary based on user preference. It iterates through the dictionary of options, checking for the first option with a selection value of 'Y' (case-insensitive). If no such option is found, it returns the first option in the dictionary. If the dictionary is empty, it returns None.
+# MAGIC #### Prioirity score for touchpoints using a pre-trained classification model
+# MAGIC The 'model_input' function generates priority scores for Health Care Professionals (HCPs) and channels based on a trained machine learning model. It leverages paths to the model, model features, and input data files provided in a configuration dictionary.
 
 # COMMAND ----------
 
-def select_option(options):
+# Generating priority scores for Health Care Professionals (HCPs) and channels based on a trained machine learning model
+def model_input(config_file_paths):
     """
-    Select an option from a dictionary based on user preference.
+    Generates priority scores for Health Care Professionals (HCPs) and channels based on a trained machine learning model.
 
-    This function iterates through a dictionary of options, checking for the first option
-    with a selection value of 'Y' (case-insensitive). If no such option is found, it returns
-    the first option in the dictionary. If the dictionary is empty, it returns None.
-
-    Parameters:
-    options (dict): A dictionary where keys are options and values are selection indicators ('Y' or 'N').
+    Args:
+    - config_file_paths (dict): A dictionary containing paths to the model, model features, and input data files.
 
     Returns:
-    str or None: The selected option if a 'Y' is found, the first option if no 'Y' is found,
-                 or None if the dictionary is empty.
+    - hcp_priority (DataFrame): A DataFrame containing priority scores for HCPs and channels, sorted by HCP ID and priority.
     """
-    # Iterate through the dictionary items
-    for option, selection in options.items():
-        # Check if the selection is 'Y' (case-insensitive)
-        if selection.upper() == 'Y':
-            # Return the option if 'Y' is found
-            return option
+    print("In model function")
+    model_path = config_file_paths.get('model','')
+    model_features_path = config_file_paths.get('model_cols','')
+    input_data_path = config_file_paths.get('model_input_data','')
     
-    # Use the first option if no 'Y' is found
-    return next(iter(options), None)
+    model  =  joblib.load(model_path)
+    model_cols = joblib.load(model_features_path)
+    
+    model_data = pd.read_csv(input_data_path)
+     
+    missing_cols = [x.upper() for x in model_cols if x.upper() not in model_data.columns.str.upper()]
+    print('Following features are missing from the input data:',missing_cols)    
+    
+    predictions = model.predict_proba(model_data[model_cols])
+    
+    model_data['ENG_PROB'] = predictions[:, 1] # considering a binary classifier
+    
+    hcp_priority = model_data.groupby(['HCP_ID', 'CHANNEL'])['ENG_PROB'].mean().reset_index() # taking avg prob
+    hcp_priority = model_data[['HCP_ID','CHANNEL','ENG_PROB']].drop_duplicates()
+    hcp_priority.sort_values(by=['HCP_ID', 'ENG_PROB'], ascending=[True, False], inplace=True)
+    hcp_priority['PRIORITY'] = hcp_priority.groupby('HCP_ID').cumcount() + 1
+
+    return hcp_priority
+
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC #### The 'tp_allocation' function allocates touchpoints to segments based on optimization criteria defined by the columns 'OPTIMIZED_FREQUENCY', 'GEKKO_MAX_TP', and 'FINAL_MAX_TOUCHPOINTS_SEGMENT'. It takes a DataFrame containing input data and returns a DataFrame containing the recommended touchpoint allocations with specific columns renamed.
+# MAGIC #### Geeko Optimization Algorithm
+# MAGIC The 'run_gekko_optimization' function performs optimization using the GEKKO optimization library on a given DataFrame, train_df. The function iterates over unique combinations of channels and constraint segment values, applying optimization techniques to determine the optimal touchpoints for each subset of data.
+
+# COMMAND ----------
+
+def run_gekko_optimization(train_df):
+    """
+    Performs optimization using the GEKKO optimization library on a DataFrame train_df.
+
+    Args:
+    - train_df (DataFrame): The DataFrame containing the data for optimization.
+
+    Returns:
+    - df_for_algo (DataFrame): The DataFrame containing the optimized results.
+    """
+
+    # Extracting column names from the DataFrame
+    columns = train_df.columns.tolist()
+
+    # Initializing an empty DataFrame to store optimized results
+    df_for_algo = pd.DataFrame(columns=columns)
+
+    # Extracting unique channel and constraint segment values
+    chan_list = train_df['CHANNEL'].unique().tolist()
+    seg_list = train_df['CONSTRAINT_SEGMENT_VALUE'].unique().tolist()
+
+    # Iterating over unique combinations of channels and constraint segment values
+    for i in chan_list:
+        for j in seg_list:
+            # Filtering DataFrame based on current channel and constraint segment value
+            gekko_db = train_df[(train_df['CHANNEL'] == i) & (train_df['CONSTRAINT_SEGMENT_VALUE'] == j)].reset_index(drop=True)
+
+            # Skipping empty subsets
+            if gekko_db['HCP_ID'].count() == 0:
+                continue
+
+            # Getting maximum optimized frequency and number of rows
+            max_of = gekko_db["OPTIMIZED_FREQUENCY"].sum()
+            n = len(gekko_db)
+
+            # initialize model
+            m = GEKKO(remote=False)
+
+            # initialize variable
+            tp = np.array([m.Var(lb=gekko_db.at[i, "FINAL_MIN_TOUCHPOINTS_SEGMENT"], ub=gekko_db.at[i, "FINAL_MAX_TOUCHPOINTS_SEGMENT"]) for i in range(n)])
+
+            # constraints
+            m.Equation(m.sum(list(tp)) <= max_of)
+
+            # objective
+            New_Beta = gekko_db['NEW_BETA'].values
+            a = gekko_db.at[0, "ADJ_FACTOR"]
+            k = gekko_db.at[0, "PARAMETER1"]
+
+            # objective
+            if gekko_db.at[0, "TRANSFORMATION"] == "LOG":
+                [m.Maximize(m.log(i) * a * j) for i, j in zip((1 + tp * k), New_Beta)]
+                m.solve(disp=False)
+
+            if gekko_db.at[0, "TRANSFORMATION"] == "POWER":
+                [m.Maximize((i ** k) * j * a) for i, j in zip(tp, New_Beta)]
+                m.solve(disp=False)
+
+            if gekko_db.at[0, "TRANSFORMATION"] == "LINEAR":
+                [m.Maximize(i * j) for i, j in zip(tp, New_Beta)]
+                m.solve(disp=False)
+
+            if gekko_db.at[0, "TRANSFORMATION"] == "NEGEX":
+                [m.Maximize((1 - m.exp(-i)) * a * j) for i, j in zip(tp * k, New_Beta)]
+                m.solve(disp=False)
+
+            # Extracting optimized results
+            x = [tp[i][0] for i in range(n)]
+            x = np.array(x)
+            gekko_db['GEKKO_MAX_TP'] = x
+
+            # Rounding the optimized touchpoints to the nearest integer
+            gekko_db["GEKKO_MAX_TP"] = gekko_db["GEKKO_MAX_TP"].round(decimals=0)
+
+            # Concatenating current optimized results with the main DataFrame
+            df_for_algo = pd.concat([gekko_db, df_for_algo]).reset_index(drop=True)
+
+    return df_for_algo
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC #### Touchpoint allocation
+# MAGIC The 'tp_allocation' function allocates touchpoints to segments based on optimization criteria defined by the columns 'OPTIMIZED_FREQUENCY', 'GEKKO_MAX_TP', and 'FINAL_MAX_TOUCHPOINTS_SEGMENT'. It takes a DataFrame containing input data and returns a DataFrame containing the recommended touchpoint allocations with specific columns renamed.
 
 # COMMAND ----------
 
@@ -949,107 +1011,8 @@ def tp_allocation(df_final_gekko):
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC #### The 'uplift_calc' function calculates uplift metrics based on the provided DataFrame and generates related visualizations. It adds new columns to the input DataFrame for optimized transactions, calculates overall uplift percentages, and saves the results to CSV files. Additionally, it generates and saves a bar chart visualization of the uplift metrics.
-
-# COMMAND ----------
-
-def uplift_calc(final_df):
-    """
-    Calculate uplift metrics based on the provided DataFrame and generate related visualizations.
-
-    This function adds new columns to the input DataFrame for optimized transactions,
-    calculates overall uplift percentages, and saves the results to CSV files.
-    Additionally, it generates and saves a bar chart visualization of the uplift metrics.
-
-    Parameters:
-    final_df (pd.DataFrame): Input DataFrame containing the necessary data for uplift calculation.
-
-    Returns:
-    None
-    """
-
-    # Adding two new columns (MMO_TRX and OPTIMIZED_TRX) to the DataFrame using the apply method and lambda functions
-    final_df["MMO_TRX"] = final_df.apply(lambda row: calculate_optimized_trx(row, tps='OPTIMIZED_FREQUENCY', beta='RESPONSE_COEFFICIENT'), axis=1)
-    final_df["OPTIMIZED_TRX"] = final_df.apply(lambda row: calculate_optimized_trx(row, tps='FINAL_QTRLY_TOUCHPOINT', beta='NEW_BETA'), axis=1)
-    
-    # Calculate the total transactions for optimized and MMO touchpoints where affinity score is greater than 0
-    Optimized_trx = final_df[final_df['AFFINITY_SCORE'] > 0]['OPTIMIZED_TRX'].sum()
-    MMO_Trx = final_df[final_df['AFFINITY_SCORE'] > 0]['MMO_TRX'].sum()
-    
-    # Calculate the overall uplift percentage
-    d = (Optimized_trx / MMO_Trx) - 1
-    d = d * 100
-    overall_lift = d
-    
-    # Calculate uplift percentages assuming different execution rates (60% and 80%)
-    overall_lift3 = overall_lift * 0.6
-    overall_lift4 = overall_lift * 0.8
-    
-    # Store uplift metrics in a DataFrame and round values to four decimal places
-    uplift_data = np.array([[overall_lift / 100, overall_lift * 0.8 / 100, overall_lift * 0.6 / 100]])
-    ipp_uplift = pd.DataFrame(uplift_data, columns=["Total Uplift", "Assuming 80% Execution", "Assuming 60% Execution"])
-    ipp_uplift = ipp_uplift.round(decimals=4)
-    
-    # Save the uplift metrics and the DataFrame with calculated metrics to CSV files
-    ipp_uplift.to_csv(f"{output_folder}/IPP_Uplift.csv", index=False)
-    final_df.to_csv(f'{output_folder}/final_output_with_opti_trx.csv', index=False)
-
-    # Print the overall uplift percentages
-    print(f"Overall_Uplift : {round(overall_lift, 2)}%\n",
-          f"Uplift 80% execution : {round(overall_lift4, 2)}%\n",
-          f"Uplift 60% execution: {round(overall_lift3, 2)}%\n")
-    
-    # Generate a bar chart visualization of the uplift metrics
-
-    plt.rcParams.update({'font.size': 22})
-    colors = ['#EF995F', '#ccffcc', '#FFD68A', '#FFA500', '#FFB52E', '#FFC55C', '#C5E0B4']
-    cmap1 = LinearSegmentedColormap.from_list("my_colormap", colors)
-
-    df = pd.DataFrame({'data': [overall_lift, overall_lift3],
-                       'data2': [np.nan, overall_lift4 - overall_lift3]}, index=['Potential Uplift', 'Expected Realizable Uplift'])
-
-    ax = df.plot.bar(figsize=(9, 7), rot=0, legend=False, align='center', width=0.4, stacked=True, colormap=cmap1)
-
-    texts = ['Estimated opportunity with the analysis', 'Assuming 60% of the execution']
-    a = "~" + str(round(overall_lift, 1)) + "%"
-    b = "~" + str(round(overall_lift3, 1)) + "%"
-    c = "~" + str(round(overall_lift4, 1)) + "%"
-    text = [a, b]
-    text2 = ["", c]
-
-    for i, v in enumerate(df['data']):
-        ax.plot([i + 0.2, ax.get_xlim()[-1]], [v, v],
-                ls='--', c='k')
-        ax.text(ax.get_xlim()[-1] + 0.1, v, texts[i], size=20)
-        ax.text(i, v + 0.1, text[i], size=20, horizontalalignment='center')
-
-    texts = ["", 'Assuming 80% of the execution']
-
-    for i, v in enumerate(df['data2']):
-        ax.plot([i + 0.1, ax.get_xlim()[-1]], [v + overall_lift3, v + overall_lift3],
-                ls='--', c='k')
-        ax.text(ax.get_xlim()[-1] + .1, v + overall_lift3, texts[i], size=20)
-        ax.text(i, v + overall_lift3 + 0.05, text2[i], size=20, horizontalalignment='center')
-
-    ax.axes.yaxis.set_visible(True)
-    ax.tick_params(axis='x', which='major', pad=15)
-    ax.axes.yaxis.set_ticklabels([])
-
-    for spine in ax.spines:
-        ax.spines[spine].set_visible(False)
-
-    ax.set_facecolor('xkcd:white')
-
-    # Save the plot as an image
-    uplift_output_path = os.path.join(output_folder, 'Uplift', 'Uplift.png')
-    plt.savefig(uplift_output_path, bbox_inches="tight")
-
-    return None
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC #### The 'quarterly_to_monthly' function converts quarterly touchpoint allocations to monthly allocations based on configuration settings and historical data. It processes a DataFrame of touchpoint allocation recommendations, adjusts the allocations based on historical data and predefined rules, and returns a DataFrame with the final monthly touchpoint allocations.
+# MAGIC #### Transfor Quarterly touchpoints to Monthly
+# MAGIC The 'quarterly_to_monthly' function converts quarterly touchpoint allocations to monthly allocations based on configuration settings and historical data. It processes a DataFrame of touchpoint allocation recommendations, adjusts the allocations based on historical data and predefined rules, and returns a DataFrame with the final monthly touchpoint allocations.
 
 # COMMAND ----------
 
@@ -1127,8 +1090,9 @@ def quarterly_to_monthly(recommendations):
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC #### The 'weekly_tps' function distributes monthly touchpoint allocations into weekly allocations for each HCP (Health Care Professional). It processes a DataFrame of touchpoint allocation recommendations and distributes the monthly touchpoints into weekly touchpoints based on predefined rules.
+# MAGIC %md 
+# MAGIC #### Transfor Monthly Touchpoints to Weekly Touchpoints
+# MAGIC The 'weekly_tps' function distributes monthly touchpoint allocations into weekly allocations for each HCP (Health Care Professional). It processes a DataFrame of touchpoint allocation recommendations and distributes the monthly touchpoints into weekly touchpoints based on predefined rules.
 
 # COMMAND ----------
 
@@ -1212,8 +1176,9 @@ def weekly_tps(recommendations, tps_column=None, num_weeks=None):
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC #### This function allocates weekly touchpoints to Health Care Professionals (HCPs) based on various criteria including historical data, distribution rules, priority, and minimum gap constraints. It reads input files, processes the data, applies business rules, and returns the final allocation of touchpoints for each HCP.
+# MAGIC %md 
+# MAGIC #### Allocating Weekly Touchpoints (Sequence them)
+# MAGIC This function allocates weekly touchpoints to Health Care Professionals (HCPs) based on various criteria including historical data, distribution rules, priority, and minimum gap constraints. It reads input files, processes the data, applies business rules, and returns the final allocation of touchpoints for each HCP.
 
 # COMMAND ----------
 
@@ -1382,186 +1347,163 @@ def weekly_seq(recommendations_hcp, historical_data):
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC #### The 'model_input' function generates priority scores for Health Care Professionals (HCPs) and channels based on a trained machine learning model. It leverages paths to the model, model features, and input data files provided in a configuration dictionary.
+# MAGIC #### Uplift calculation through Model Recommendations
+# MAGIC The 'uplift_calc' function calculates uplift metrics based on the provided DataFrame and generates related visualizations. It adds new columns to the input DataFrame for optimized transactions, calculates overall uplift percentages, and saves the results to CSV files. Additionally, it generates and saves a bar chart visualization of the uplift metrics.
 
 # COMMAND ----------
 
-# Generating priority scores for Health Care Professionals (HCPs) and channels based on a trained machine learning model
-def model_input(config_file_paths):
+def uplift_calc(final_df):
     """
-    Generates priority scores for Health Care Professionals (HCPs) and channels based on a trained machine learning model.
+    Calculate uplift metrics based on the provided DataFrame and generate related visualizations.
 
-    Args:
-    - config_file_paths (dict): A dictionary containing paths to the model, model features, and input data files.
+    This function adds new columns to the input DataFrame for optimized transactions,
+    calculates overall uplift percentages, and saves the results to CSV files.
+    Additionally, it generates and saves a bar chart visualization of the uplift metrics.
+
+    Parameters:
+    final_df (pd.DataFrame): Input DataFrame containing the necessary data for uplift calculation.
 
     Returns:
-    - hcp_priority (DataFrame): A DataFrame containing priority scores for HCPs and channels, sorted by HCP ID and priority.
+    None
     """
-    print("In model function")
-    model_path = config_file_paths.get('model','')
-    model_features_path = config_file_paths.get('model_cols','')
-    input_data_path = config_file_paths.get('model_input_data','')
-    
-    model  =  joblib.load(model_path)
-    model_cols = joblib.load(model_features_path)
-    
-    model_data = pd.read_csv(input_data_path)
-     
-    missing_cols = [x.upper() for x in model_cols if x.upper() not in model_data.columns.str.upper()]
-    print('Following features are missing from the input data:',missing_cols)    
-    
-    predictions = model.predict_proba(model_data[model_cols])
-    
-    model_data['ENG_PROB'] = predictions[:, 1] # considering a binary classifier
-    
-    hcp_priority = model_data.groupby(['HCP_ID', 'CHANNEL'])['ENG_PROB'].mean().reset_index() # taking avg prob
-    hcp_priority = model_data[['HCP_ID','CHANNEL','ENG_PROB']].drop_duplicates()
-    hcp_priority.sort_values(by=['HCP_ID', 'ENG_PROB'], ascending=[True, False], inplace=True)
-    hcp_priority['PRIORITY'] = hcp_priority.groupby('HCP_ID').cumcount() + 1
 
-    return hcp_priority
+    # Adding two new columns (MMO_TRX and OPTIMIZED_TRX) to the DataFrame using the apply method and lambda functions
+    final_df["MMO_TRX"] = final_df.apply(lambda row: calculate_optimized_trx(row, tps='OPTIMIZED_FREQUENCY', beta='RESPONSE_COEFFICIENT'), axis=1)
+    final_df["OPTIMIZED_TRX"] = final_df.apply(lambda row: calculate_optimized_trx(row, tps='FINAL_QTRLY_TOUCHPOINT', beta='NEW_BETA'), axis=1)
+    
+    # Calculate the total transactions for optimized and MMO touchpoints where affinity score is greater than 0
+    Optimized_trx = final_df[final_df['AFFINITY_SCORE'] > 0]['OPTIMIZED_TRX'].sum()
+    MMO_Trx = final_df[final_df['AFFINITY_SCORE'] > 0]['MMO_TRX'].sum()
+    
+    # Calculate the overall uplift percentage
+    d = (Optimized_trx / MMO_Trx) - 1
+    d = d * 100
+    overall_lift = d
+    
+    # Calculate uplift percentages assuming different execution rates (60% and 80%)
+    overall_lift3 = overall_lift * 0.6
+    overall_lift4 = overall_lift * 0.8
+    
+    # Store uplift metrics in a DataFrame and round values to four decimal places
+    uplift_data = np.array([[overall_lift / 100, overall_lift * 0.8 / 100, overall_lift * 0.6 / 100]])
+    ipp_uplift = pd.DataFrame(uplift_data, columns=["Total Uplift", "Assuming 80% Execution", "Assuming 60% Execution"])
+    ipp_uplift = ipp_uplift.round(decimals=4)
+    
+    # Save the uplift metrics and the DataFrame with calculated metrics to CSV files
+    ipp_uplift.to_csv(f"{output_folder}/IPP_Uplift.csv", index=False)
+    final_df.to_csv(f'{output_folder}/final_output_with_opti_trx.csv', index=False)
 
+    # Print the overall uplift percentages
+    print(f"Overall_Uplift : {round(overall_lift, 2)}%\n",
+          f"Uplift 80% execution : {round(overall_lift4, 2)}%\n",
+          f"Uplift 60% execution: {round(overall_lift3, 2)}%\n")
+    
+    # Generate a bar chart visualization of the uplift metrics
+
+    plt.rcParams.update({'font.size': 22})
+    colors = ['#EF995F', '#ccffcc', '#FFD68A', '#FFA500', '#FFB52E', '#FFC55C', '#C5E0B4']
+    cmap1 = LinearSegmentedColormap.from_list("my_colormap", colors)
+
+    df = pd.DataFrame({'data': [overall_lift, overall_lift3],
+                       'data2': [np.nan, overall_lift4 - overall_lift3]}, index=['Potential Uplift', 'Expected Realizable Uplift'])
+
+    ax = df.plot.bar(figsize=(9, 7), rot=0, legend=False, align='center', width=0.4, stacked=True, colormap=cmap1)
+
+    texts = ['Estimated opportunity with the analysis', 'Assuming 60% of the execution']
+    a = "~" + str(round(overall_lift, 1)) + "%"
+    b = "~" + str(round(overall_lift3, 1)) + "%"
+    c = "~" + str(round(overall_lift4, 1)) + "%"
+    text = [a, b]
+    text2 = ["", c]
+
+    for i, v in enumerate(df['data']):
+        ax.plot([i + 0.2, ax.get_xlim()[-1]], [v, v],
+                ls='--', c='k')
+        ax.text(ax.get_xlim()[-1] + 0.1, v, texts[i], size=20)
+        ax.text(i, v + 0.1, text[i], size=20, horizontalalignment='center')
+
+    texts = ["", 'Assuming 80% of the execution']
+
+    for i, v in enumerate(df['data2']):
+        ax.plot([i + 0.1, ax.get_xlim()[-1]], [v + overall_lift3, v + overall_lift3],
+                ls='--', c='k')
+        ax.text(ax.get_xlim()[-1] + .1, v + overall_lift3, texts[i], size=20)
+        ax.text(i, v + overall_lift3 + 0.05, text2[i], size=20, horizontalalignment='center')
+
+    ax.axes.yaxis.set_visible(True)
+    ax.tick_params(axis='x', which='major', pad=15)
+    ax.axes.yaxis.set_ticklabels([])
+
+    for spine in ax.spines:
+        ax.spines[spine].set_visible(False)
+
+    ax.set_facecolor('xkcd:white')
+
+    # Save the plot as an image
+    uplift_output_path = os.path.join(output_folder, 'Uplift', 'Uplift.png')
+    plt.savefig(uplift_output_path, bbox_inches="tight")
+
+    return None
+
+# COMMAND ----------
+
+def affinity_segment_charts(final_df):
+    cps = ["VH", "H", "M", "L", "VL", "Z", "NR"]
+
+    customer_segment = pd.DataFrame(columns=["Segment", "Channel", "#HCPs"])
+    segment_column_list = final_df['CONSTRAINT_SEGMENT_NAME'].unique().tolist()
+    channel_column = 'CHANNEL'
+    affinity_column = 'AFFINITY_SEGMENT'
+    
+    for i in segment_column_list:
+        for j in cps:
+                reqdata = final_df[['HCP_ID', i, channel_column, 'AFFINITY_SCORE', affinity_column]]
+                if (j in reqdata[affinity_column].unique()):
+                    reqdata2 = reqdata[reqdata[affinity_column] == j]
+                    la = pd.DataFrame(pd.crosstab(index=reqdata2[i], columns=reqdata2[channel_column],
+                                                  values=reqdata2['HCP_ID'], aggfunc=pd.Series.nunique).reset_index())
+
+                    lab = la.set_index(i)
+                    labb = lab.stack().reset_index()
+                    labb.rename(columns={0: '#HCPs'}, inplace=True)
+
+                    colors = ['#ED7D31', '#EF995F', '#FFD68A', '#FFA500', '#FFB52E', '#FFC55C', '#FF6347', '#FF4500',
+                              '#FF7F50']
+                    abcd = f"Classification of customers for '{i}' and affinity segment '{j}'"
+
+                    fig = px.bar(labb, x=i, y='#HCPs', color=labb[channel_column], barmode='stack',
+                                 text=labb['#HCPs'].astype(str), color_discrete_sequence=colors)
+
+                    ylabel = f"n size ({len(np.unique(reqdata2['HCP_ID'])):,} HCPs)"
+
+                    fig.update_layout(title_text=abcd, title_x=0.5, title_font_color='#ED7D31')
+                    fig.update_layout(xaxis_title=ylabel)
+                    fig.update_layout(yaxis_title="Number of Customers")
+                    fig.update_layout({
+                        'plot_bgcolor': 'rgba(0, 0, 0, 0)',
+                        'paper_bgcolor': 'rgba(0, 0, 0, 0)',
+                    })
+
+                    fig.update_traces(texttemplate='%{text:,}')
+                    fig.update_traces(textfont_size=12)
+                    fig.update_traces(texttemplate='%{text:,}')
+                    fig.update_yaxes(tickformat=",d")
+                     
+                    output_path = os.path.join(output_folder, 'Customer_Segmentation_Charts', f"Classification_of_customers_for_{i}_and_affinity_segment_{j}.png")
+                    fig.write_image(file=output_path,engine="kaleido")
+
+                    labb["Segment Name"] = i
+                    labb["Affinity Segment"] = j
+                    labb.rename(columns={i: "Segment"}, inplace=True)
+                    customer_segment = pd.concat([customer_segment, labb]).reset_index(drop=True)
+
+    return None
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC #### The 'create_subsets' function creates subsets of the input DataFrame based on unique combinations of channels and constraint segment values. This function handles the creation and processing of these subsets with specific rules to ensure a balanced and meaningful distribution of data.
-
-# COMMAND ----------
-
-def create_subsets(df_final):
-    """
-    Creates subsets of the input DataFrame based on unique combinations of channels and constraint segment values.
-
-    Args:
-    - df_final (DataFrame): The DataFrame containing the final data.
-
-    Returns:
-    - train_df (DataFrame): The DataFrame containing subsets of data based on unique combinations of channels and constraint segment values.
-    """
-    columns = df_final.columns.tolist()
-    train_df = pd.DataFrame(columns=columns)
-
-    chan_list = df_final['CHANNEL'].unique().tolist()
-    seg_list = df_final['CONSTRAINT_SEGMENT_VALUE'].unique().tolist()
-
-    # Iterating over unique combinations of channels and constraint segment values
-    for i in chan_list:
-        for j in seg_list:
-            df_temp = df_final[(df_final['CHANNEL'] == i) & (df_final['CONSTRAINT_SEGMENT_VALUE'] == j)].reset_index(drop=True)
-            
-            # Skipping empty subsets
-            if df_temp['HCP_ID'].count() == 0:
-                continue
-            
-            # Creating subsets based on affinity score
-            if df_temp['HCP_ID'].count() <= 500:
-                train = df_temp
-            else:
-                single_value = df_temp[~df_temp['AFFINITY_SCORE'].duplicated(keep=False)]
-                df_temp = df_temp[df_temp['AFFINITY_SCORE'].duplicated(keep=False)]
-                n = 500 / df_temp['HCP_ID'].count()
-                train, test = train_test_split(df_temp, test_size=1 - n, random_state=0, stratify=df_temp[['AFFINITY_SCORE']])
-            
-            # Sorting the subset based on affinity score
-            train = train.reset_index(drop=True)
-            train = train.sort_values(["AFFINITY_SCORE"], ascending=[False])
-
-            train_df = pd.concat([train_df, train, single_value]).reset_index(drop=True)
-
-    return train_df
-
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC #### The 'run_gekko_optimization' function performs optimization using the GEKKO optimization library on a given DataFrame, train_df. The function iterates over unique combinations of channels and constraint segment values, applying optimization techniques to determine the optimal touchpoints for each subset of data.
-
-# COMMAND ----------
-
-def run_gekko_optimization(train_df):
-    """
-    Performs optimization using the GEKKO optimization library on a DataFrame train_df.
-
-    Args:
-    - train_df (DataFrame): The DataFrame containing the data for optimization.
-
-    Returns:
-    - df_for_algo (DataFrame): The DataFrame containing the optimized results.
-    """
-
-    # Extracting column names from the DataFrame
-    columns = train_df.columns.tolist()
-
-    # Initializing an empty DataFrame to store optimized results
-    df_for_algo = pd.DataFrame(columns=columns)
-
-    # Extracting unique channel and constraint segment values
-    chan_list = train_df['CHANNEL'].unique().tolist()
-    seg_list = train_df['CONSTRAINT_SEGMENT_VALUE'].unique().tolist()
-
-    # Iterating over unique combinations of channels and constraint segment values
-    for i in chan_list:
-        for j in seg_list:
-            # Filtering DataFrame based on current channel and constraint segment value
-            gekko_db = train_df[(train_df['CHANNEL'] == i) & (train_df['CONSTRAINT_SEGMENT_VALUE'] == j)].reset_index(drop=True)
-
-            # Skipping empty subsets
-            if gekko_db['HCP_ID'].count() == 0:
-                continue
-
-            # Getting maximum optimized frequency and number of rows
-            max_of = gekko_db["OPTIMIZED_FREQUENCY"].sum()
-            n = len(gekko_db)
-
-            # initialize model
-            m = GEKKO(remote=False)
-
-            # initialize variable
-            tp = np.array([m.Var(lb=gekko_db.at[i, "FINAL_MIN_TOUCHPOINTS_SEGMENT"], ub=gekko_db.at[i, "FINAL_MAX_TOUCHPOINTS_SEGMENT"]) for i in range(n)])
-
-            # constraints
-            m.Equation(m.sum(list(tp)) <= max_of)
-
-            # objective
-            New_Beta = gekko_db['NEW_BETA'].values
-            a = gekko_db.at[0, "ADJ_FACTOR"]
-            k = gekko_db.at[0, "PARAMETER1"]
-
-            # objective
-            if gekko_db.at[0, "TRANSFORMATION"] == "LOG":
-                [m.Maximize(m.log(i) * a * j) for i, j in zip((1 + tp * k), New_Beta)]
-                m.solve(disp=False)
-
-            if gekko_db.at[0, "TRANSFORMATION"] == "POWER":
-                [m.Maximize((i ** k) * j * a) for i, j in zip(tp, New_Beta)]
-                m.solve(disp=False)
-
-            if gekko_db.at[0, "TRANSFORMATION"] == "LINEAR":
-                [m.Maximize(i * j) for i, j in zip(tp, New_Beta)]
-                m.solve(disp=False)
-
-            if gekko_db.at[0, "TRANSFORMATION"] == "NEGEX":
-                [m.Maximize((1 - m.exp(-i)) * a * j) for i, j in zip(tp * k, New_Beta)]
-                m.solve(disp=False)
-
-            # Extracting optimized results
-            x = [tp[i][0] for i in range(n)]
-            x = np.array(x)
-            gekko_db['GEKKO_MAX_TP'] = x
-
-            # Rounding the optimized touchpoints to the nearest integer
-            gekko_db["GEKKO_MAX_TP"] = gekko_db["GEKKO_MAX_TP"].round(decimals=0)
-
-            # Concatenating current optimized results with the main DataFrame
-            df_for_algo = pd.concat([gekko_db, df_for_algo]).reset_index(drop=True)
-
-    return df_for_algo
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC #### The 'final_merge' function merges an original DataFrame (df_final) with another DataFrame (algo_df) containing optimized maximum touchpoints calculated using the GEKKO optimization. This function ensures that the resulting DataFrame (df_final_gekko) includes the optimized touchpoints, properly sorted and initialized for further processing.
+# MAGIC #### Merging Model output with HCP demographics data for post analysis
+# MAGIC The 'final_merge' function merges an original DataFrame (df_final) with another DataFrame (algo_df) containing optimized maximum touchpoints calculated using the GEKKO optimization. This function ensures that the resulting DataFrame (df_final_gekko) includes the optimized touchpoints, properly sorted and initialized for further processing.
 
 # COMMAND ----------
 
@@ -1597,12 +1539,27 @@ def final_merge(df_final, algo_df):
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC #### The 'run_constraint_module' function orchestrates the execution of various modules related to constraint optimization, leveraging configuration settings from a specified file.
+def update_output(data,table_name):
+    # Set the Schema to the required output schema 
+    spark.catalog.setCurrentDatabase(f"{config_schema_names['output']}")
+
+    # Convert the Pandas DataFrame to a Spark DataFrame
+    df_spark = spark.createDataFrame(data)
+
+    col_names = [col_name.replace(" ", "_").replace(",", "").replace(";", "").replace("{", "").replace("}", "").replace("(", "").replace(")", "").replace("\n", "").replace("\t", "").replace("=", "") for col_name in df_spark.columns]
+
+    df_spark = df_spark.toDF(*col_names)
+
+    # Create or replace the table in Databricks
+    spark.sql(f"DROP TABLE IF EXISTS {table_name}")
+    df_spark.write.mode("overwrite").saveAsTable(table_name)
+    print(f"{table_name} stored successfully!")
 
 # COMMAND ----------
 
-import mlflow
+# MAGIC %md
+# MAGIC #### Function to stitch it all togeather
+# MAGIC The 'run_constraint_module' function orchestrates the execution of various modules related to constraint optimization, leveraging configuration settings from a specified file.
 
 # COMMAND ----------
 
@@ -1621,6 +1578,12 @@ def run_constraint_module(config_path):
     with mlflow.start_run():
         # Load configuration from the provided config file
         load_config(config_path) 
+
+        # Set the Spark catalog to be used during the run
+        spark.sql(f"USE CATALOG {catalog_name['catalog']}")
+
+        #Set the Files Schema to be used during the run
+        spark.catalog.setCurrentDatabase(f"{config_schema_names['file_paths']}")
 
         # Validate files
         validation_result = validate_files(config_file_paths)
@@ -1662,6 +1625,7 @@ def run_constraint_module(config_path):
                 if final_output_level == 'QUARTERLY':
                     output_path = os.path.join(output_folder,'Final_Plan','HCP_Quarterly_Plan.csv')
                     final_quarterly_plan.to_csv(output_path,index=False)
+                    update_output(final_quarterly_plan, 'HCP_Quarterly_Plan')
                     print('Quarterly HCP Promotional Plan Created')
                     # sys.exit()
                     quit()
@@ -1671,6 +1635,7 @@ def run_constraint_module(config_path):
                         print('Monthly HCP Promotional Plan Created')
                         output_path = os.path.join(output_folder,'Final_Plan','HCP_Monthly_Plan.csv')
                         monthly_plan.to_csv(output_path,index=False)
+                        update_output(monthly_plan, 'HCP_Monthly_Plan')
                         # sys.exit()
                         quit()
                     else:
@@ -1679,6 +1644,7 @@ def run_constraint_module(config_path):
                         final_weekly_seq  = weekly_seq(weekly_plan,historical_data)
                         output_path = os.path.join(output_folder,'Final_Plan','HCP_Weekly_Plan.csv')
                         final_weekly_seq.to_csv(output_path,index=False)
+                        update_output(final_weekly_seq, 'HCP_Weekly_Plan')
                         # sys.exit()
                         quit()    
             else:
@@ -1691,7 +1657,8 @@ def run_constraint_module(config_path):
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC #### The 'model_start' function serves as the entry point for initiating the optimization model. It sets the configuration path and triggers the execution of the constraint optimization module.
+# MAGIC #### Functiont to call "run_constraint_module" andd trigger the Notebook
+# MAGIC The 'model_start' function serves as the entry point for initiating the optimization model. It sets the configuration path and triggers the execution of the constraint optimization module.
 
 # COMMAND ----------
 
@@ -1709,11 +1676,6 @@ def model_start():
 
     # Running the constraint optimization module with the specified configuration path
     run_constraint_module(config_path)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC #### Calling the function to start model run
 
 # COMMAND ----------
 

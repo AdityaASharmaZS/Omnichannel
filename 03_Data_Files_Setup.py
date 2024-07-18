@@ -20,12 +20,23 @@ with open(yaml_file_path, 'r') as file:
 # Extract the file_paths section
 file_paths = yaml_content.get('file_paths', {})
 table_names = yaml_content.get('table_names', {})
-
+catalog = yaml_content.get('catalog_name',{})
+schema = yaml_content.get('schema_names',{})
 # Display the file paths and table names dictionaries
 print("File Paths:")
 print(file_paths)
 print("\nTable Names:")
 print(table_names)
+
+# COMMAND ----------
+
+# Set the Spark catalog to be used during the run
+spark.sql(f"USE CATALOG {catalog['catalog']}")
+
+# COMMAND ----------
+
+#Set the Files Schema to be used during the run
+spark.catalog.setCurrentDatabase(f"{schema['file_paths']}")
 
 # COMMAND ----------
 

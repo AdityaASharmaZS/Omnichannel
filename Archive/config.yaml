@@ -1,14 +1,16 @@
+catalog_name:
+  catalog: non_prod_catalog
 control_parameters:
   dist_rule_monthly:
-    EQUAL: N
+    EQUAL: Y
     HISTORICAL: N
-    PREDEFINED_SPLIT: Y
+    PREDEFINED_SPLIT: N
   dist_rule_weekly:
     AGGRESSIVE: N
     EQUAL: Y
   final_output_level:
     MONTHLY: N
-    QUARTERLY: Y
+    QUARTERLY: N
     WEEKLY: N
   monthly_dist_split: null
   weekly_max_tp_aggresive: null
@@ -30,16 +32,19 @@ output:
   output_folder_path: ./Outputs
   run_id: ''
 run_period:
-  end_date: '2024-12-31'
-  refresh_date: '2024-06-01'
-  start_date: '2024-05-02'
+  end_date: 2024-07-31
+  refresh_date: 2024-07-18
+  start_date: 2024-07-01
+schema_names:
+  file_paths: nbagold
+  output: nba_outputs
 table_names:
   asset_availability: asset_availability
   constraint_segment: constraint_segment
-  customer_data: customer_data
+  customer_data: customer_demographics
   engagement_goal: engagement_goal
   extra_constraint_file: null
-  historical_data: historical_data
+  historical_data: customer_historical_engagement_data
   min_gap: min_gap
   mmix_output: mmix_output
   model: null

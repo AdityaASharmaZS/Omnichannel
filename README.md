@@ -39,3 +39,5 @@ If you are new to Databricks, create an account at: https://databricks.com/try-d
 
 ## Datasets used
 Several omnichannel-specific datasets have been used to build and run the model. Sample datasets can be found in the "Data_Files" folder, along with an additional README "Data File Information.png" file containing data specifications.
+
+![DataSets](https://dbc-4b4ee781-3993.cloud.databricks.com/files/shared_uploads/Data_File_Information.png)

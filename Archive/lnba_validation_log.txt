@@ -1,0 +1,210 @@
+2024-07-17 21:00:17,606 - ERROR - Error processing file : 
+[PARSE_EMPTY_STATEMENT] Syntax error, unexpected empty statement. SQLSTATE: 42617 (line 1, pos 0)
+
+== SQL ==
+
+^^^
+
+2024-07-17 21:00:32,401 - ERROR - Error processing file : 
+[PARSE_EMPTY_STATEMENT] Syntax error, unexpected empty statement. SQLSTATE: 42617 (line 1, pos 0)
+
+== SQL ==
+
+^^^
+
+2024-07-17 21:16:53,692 - ERROR - Error processing file : 
+[PARSE_EMPTY_STATEMENT] Syntax error, unexpected empty statement. SQLSTATE: 42617 (line 1, pos 0)
+
+== SQL ==
+
+^^^
+
+2024-07-17 21:17:07,667 - ERROR - Error processing file : 
+[PARSE_EMPTY_STATEMENT] Syntax error, unexpected empty statement. SQLSTATE: 42617 (line 1, pos 0)
+
+== SQL ==
+
+^^^
+
+2024-07-18 08:15:06,324 - ERROR - Error processing file : 
+[PARSE_EMPTY_STATEMENT] Syntax error, unexpected empty statement. SQLSTATE: 42617 (line 1, pos 0)
+
+== SQL ==
+
+^^^
+
+2024-07-18 08:15:18,992 - ERROR - Error processing file : 
+[PARSE_EMPTY_STATEMENT] Syntax error, unexpected empty statement. SQLSTATE: 42617 (line 1, pos 0)
+
+== SQL ==
+
+^^^
+
+2024-07-18 13:12:06,293 - ERROR - Error processing file : 
+[PARSE_EMPTY_STATEMENT] Syntax error, unexpected empty statement. SQLSTATE: 42617 (line 1, pos 0)
+
+== SQL ==
+
+^^^
+
+2024-07-18 13:12:21,334 - ERROR - Error processing file : 
+[PARSE_EMPTY_STATEMENT] Syntax error, unexpected empty statement. SQLSTATE: 42617 (line 1, pos 0)
+
+== SQL ==
+
+^^^
+
+2024-07-18 13:30:14,348 - ERROR - Error processing file : 
+[PARSE_EMPTY_STATEMENT] Syntax error, unexpected empty statement. SQLSTATE: 42617 (line 1, pos 0)
+
+== SQL ==
+
+^^^
+
+2024-07-18 13:30:27,781 - ERROR - Error processing file : 
+[PARSE_EMPTY_STATEMENT] Syntax error, unexpected empty statement. SQLSTATE: 42617 (line 1, pos 0)
+
+== SQL ==
+
+^^^
+
+2024-07-18 13:36:31,279 - ERROR - Error processing file : 
+[PARSE_EMPTY_STATEMENT] Syntax error, unexpected empty statement. SQLSTATE: 42617 (line 1, pos 0)
+
+== SQL ==
+
+^^^
+
+2024-07-18 13:36:43,913 - ERROR - Error processing file : 
+[PARSE_EMPTY_STATEMENT] Syntax error, unexpected empty statement. SQLSTATE: 42617 (line 1, pos 0)
+
+== SQL ==
+
+^^^
+
+2024-07-18 13:44:16,572 - ERROR - Error processing file : 
+[PARSE_EMPTY_STATEMENT] Syntax error, unexpected empty statement. SQLSTATE: 42617 (line 1, pos 0)
+
+== SQL ==
+
+^^^
+
+2024-07-18 13:44:29,071 - ERROR - Error processing file : 
+[PARSE_EMPTY_STATEMENT] Syntax error, unexpected empty statement. SQLSTATE: 42617 (line 1, pos 0)
+
+== SQL ==
+
+^^^
+
+2024-07-18 13:52:01,683 - ERROR - Error processing file : 
+[PARSE_EMPTY_STATEMENT] Syntax error, unexpected empty statement. SQLSTATE: 42617 (line 1, pos 0)
+
+== SQL ==
+
+^^^
+
+2024-07-18 13:52:13,836 - ERROR - Error processing file : 
+[PARSE_EMPTY_STATEMENT] Syntax error, unexpected empty statement. SQLSTATE: 42617 (line 1, pos 0)
+
+== SQL ==
+
+^^^
+
+2024-07-18 13:54:29,482 - ERROR - Error processing file : 
+[PARSE_EMPTY_STATEMENT] Syntax error, unexpected empty statement. SQLSTATE: 42617 (line 1, pos 0)
+
+== SQL ==
+
+^^^
+
+2024-07-18 13:54:42,407 - ERROR - Error processing file : 
+[PARSE_EMPTY_STATEMENT] Syntax error, unexpected empty statement. SQLSTATE: 42617 (line 1, pos 0)
+
+== SQL ==
+
+^^^
+
+2024-07-18 14:13:58,379 - ERROR - Error processing file : 
+[PARSE_EMPTY_STATEMENT] Syntax error, unexpected empty statement. SQLSTATE: 42617 (line 1, pos 0)
+
+== SQL ==
+
+^^^
+
+2024-07-18 14:14:11,665 - ERROR - Error processing file : 
+[PARSE_EMPTY_STATEMENT] Syntax error, unexpected empty statement. SQLSTATE: 42617 (line 1, pos 0)
+
+== SQL ==
+
+^^^
+
+2024-07-18 14:50:37,903 - ERROR - Error processing file : 
+[PARSE_EMPTY_STATEMENT] Syntax error, unexpected empty statement. SQLSTATE: 42617 (line 1, pos 0)
+
+== SQL ==
+
+^^^
+
+2024-07-18 14:50:49,981 - ERROR - Error processing file : 
+[PARSE_EMPTY_STATEMENT] Syntax error, unexpected empty statement. SQLSTATE: 42617 (line 1, pos 0)
+
+== SQL ==
+
+^^^
+
+2024-07-18 14:52:51,565 - ERROR - Error processing file : 
+[PARSE_EMPTY_STATEMENT] Syntax error, unexpected empty statement. SQLSTATE: 42617 (line 1, pos 0)
+
+== SQL ==
+
+^^^
+
+2024-07-18 14:53:03,463 - ERROR - Error processing file : 
+[PARSE_EMPTY_STATEMENT] Syntax error, unexpected empty statement. SQLSTATE: 42617 (line 1, pos 0)
+
+== SQL ==
+
+^^^
+
+2024-07-18 15:00:35,245 - ERROR - Error processing file : 
+[PARSE_EMPTY_STATEMENT] Syntax error, unexpected empty statement. SQLSTATE: 42617 (line 1, pos 0)
+
+== SQL ==
+
+^^^
+
+2024-07-18 15:00:47,715 - ERROR - Error processing file : 
+[PARSE_EMPTY_STATEMENT] Syntax error, unexpected empty statement. SQLSTATE: 42617 (line 1, pos 0)
+
+== SQL ==
+
+^^^
+
+2024-07-18 15:04:42,844 - ERROR - Error processing file : 
+[PARSE_EMPTY_STATEMENT] Syntax error, unexpected empty statement. SQLSTATE: 42617 (line 1, pos 0)
+
+== SQL ==
+
+^^^
+
+2024-07-18 15:04:55,478 - ERROR - Error processing file : 
+[PARSE_EMPTY_STATEMENT] Syntax error, unexpected empty statement. SQLSTATE: 42617 (line 1, pos 0)
+
+== SQL ==
+
+^^^
+
+2024-07-18 15:13:05,263 - ERROR - Error processing file : 
+[PARSE_EMPTY_STATEMENT] Syntax error, unexpected empty statement. SQLSTATE: 42617 (line 1, pos 0)
+
+== SQL ==
+
+^^^
+
+2024-07-18 15:13:17,619 - ERROR - Error processing file : 
+[PARSE_EMPTY_STATEMENT] Syntax error, unexpected empty statement. SQLSTATE: 42617 (line 1, pos 0)
+
+== SQL ==
+
+^^^
+

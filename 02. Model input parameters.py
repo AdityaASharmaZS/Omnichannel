@@ -210,7 +210,7 @@ CUSTOMER_DATA = Text(
 # COMMAND ----------
 
 CUSTOMER_DATA_TABLE = Text(
-    value='customer_data',
+    value='customer_demographics',
     placeholder='Type the table name here',
     description='customer data table:',
     disabled=False,
@@ -250,7 +250,7 @@ HISTORICAL_DATA = Text(
 # COMMAND ----------
 
 HISTORICAL_DATA_TABLE = Text(
-    value='historical_data',
+    value='customer_historical_engagement_data',
     placeholder='Type the table name here',
     description='historical data table:',
     disabled=False,
@@ -663,12 +663,7 @@ stop_button.on_click(model_stop)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC # UI RUN
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ##### Displaying the interactive UI
+# MAGIC # Configuration UI
 
 # COMMAND ----------
 
